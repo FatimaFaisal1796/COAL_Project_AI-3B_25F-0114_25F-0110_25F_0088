@@ -1,0 +1,237 @@
+; module03_map.inc - Module 3: level map and tile drawing
+; Procedures: InitMap, ResetMap, GetTile, SetTile, IsSolid, DrawTile, DrawMap
+; Data: charset, tile_colour, map_src (the level as text)
+
+; InitMap : ASCII map_src -> tile codes in level_orig
+InitMap:
+        push ax
+        push bx
+        push cx
+        push dx
+        push si
+        push di
+        push es
+        push ds
+        pop es
+        cld
+        mov si, map_src
+        mov bx, level_orig
+        mov dx, MAP_SIZE
+.next:
+        lodsb
+        mov di, charset
+        mov cx, CHARSET_LEN
+        repne scasb
+        jne near .sky
+        mov ax, CHARSET_LEN-1       ; code = position in charset
+        sub ax, cx
+        jmp near .store
+.sky:   xor ax, ax
+.store: mov [bx], al
+        inc bx
+        dec dx
+        jnz near .next
+        pop es
+        pop di
+        pop si
+        pop dx
+        pop cx
+        pop bx
+        pop ax
+        ret
+
+; ResetMap : level_work = level_orig (one block move)
+ResetMap:
+        push cx
+        push si
+        push di
+        push es
+        push ds
+        pop es
+        mov si, level_orig
+        mov di, level_work
+        mov cx, MAP_SIZE
+        cld
+        rep movsb
+        pop es
+        pop di
+        pop si
+        pop cx
+        ret
+
+; GetTile(px, py) -> AX = tile code.  Out of range left/right = solid, above/below = sky
+GetTile:
+        push bp
+        mov bp, sp
+        push bx
+        push cx
+        mov ax, [bp+6]
+        shr ax, 4                   ; column
+        cmp ax, MAP_W
+        jae near .wall
+        mov bx, [bp+4]
+        shr bx, 4                   ; row
+        cmp bx, MAP_H
+        jae near .sky
+        mov cx, bx
+        shl bx, 6
+        shl cx, 2
+        sub bx, cx                  ; row*60
+        add bx, ax
+        mov al, [level_work+bx]
+        xor ah, ah
+        jmp near .out
+.wall:  mov ax, 1
+        jmp near .out
+.sky:   xor ax, ax
+.out:   pop cx
+        pop bx
+        pop bp
+        ret 4
+
+; SetTile(px, py, code) : write a tile of the working map
+SetTile:
+        push bp
+        mov bp, sp
+        push ax
+        push bx
+        push cx
+        mov ax, [bp+8]
+        shr ax, 4
+        cmp ax, MAP_W
+        jae near .o
+        mov bx, [bp+6]
+        shr bx, 4
+        cmp bx, MAP_H
+        jae near .o
+        mov cx, bx
+        shl bx, 6
+        shl cx, 2
+        sub bx, cx
+        add bx, ax
+        mov al, [bp+4]
+        mov [level_work+bx], al
+.o:     pop cx
+        pop bx
+        pop ax
+        pop bp
+        ret 6
+
+; IsSolid(px, py) -> AX = 1 if the tile is solid (codes 1..10)
+IsSolid:
+        push bp
+        mov bp, sp
+        push word [bp+6]
+        push word [bp+4]
+        call GetTile
+        cmp ax, 1
+        jb near .no
+        cmp ax, 10
+        ja near .no
+        mov ax, 1
+        jmp near .o
+.no:    xor ax, ax
+.o:     pop bp
+        ret 4
+
+; DrawTile(x, y, code) : a 16x16 square in the colour of the tile type
+; Inputs: [bp+8]=x (may be negative) [bp+6]=y [bp+4]=code (0..12)
+DrawTile:
+        push bp
+        mov bp, sp
+        push ax
+        push bx
+        mov bx, [bp+4]
+        mov al, [tile_colour+bx]
+        xor ah, ah
+        push word [bp+8]
+        push word [bp+6]
+        push word 16
+        push word 16
+        push ax
+        call FillRect
+        pop bx
+        pop ax
+        pop bp
+        ret 6
+
+; DrawMap(camera_x) : visible part of level_work, scrolling pixel by pixel
+DrawMap:
+        push bp
+        mov bp, sp
+        push ax
+        push bx
+        push cx
+        push dx
+        push si
+        push di
+        mov si, [bp+4]
+        shr si, 4                   ; first column = camera_x / 16
+        mov di, [bp+4]
+        and di, 15
+        neg di                      ; screen x of the first column
+        mov cx, 21                  ; 20 columns + 1 partial
+.col:
+        cmp si, MAP_W
+        jae near .done
+        xor dx, dx                  ; row
+.row:
+        mov bx, dx
+        shl bx, 6
+        mov ax, dx
+        shl ax, 2
+        sub bx, ax
+        add bx, si                  ; index = row*60 + column
+        mov al, [level_work+bx]
+        test al, al
+        jz near .next
+        xor ah, ah
+        mov bx, dx
+        shl bx, 4                   ; y = row*16
+        push di                     ; x
+        push bx                     ; y
+        push ax                     ; tile code
+        call DrawTile
+.next:
+        inc dx
+        cmp dx, MAP_H
+        jb near .row
+        add di, 16
+        inc si
+        dec cx
+        jnz near .col
+.done:
+        pop di
+        pop si
+        pop dx
+        pop cx
+        pop bx
+        pop ax
+        pop bp
+        ret 2
+
+; ---- map data ----
+; colour of each tile code 0..12 (default VGA palette)
+;              sky ground brick ? M empty pipes(4)  stair coin pole
+tile_colour: db 0,  6,    4,   14,14, 8,  2,2,2,2,  7,    14,  10
+charset:    db '.GB?ME[]()Sc|'      ; index = tile code 0..12
+
+; ---- level map as text (60 x 12). Legend:
+; . sky  G ground  B brick  ? coin block  M mushroom block  E empty
+; [ ] pipe top   ( ) pipe body   S stair/solid   c coin   | flag pole
+; Each row below adds up to exactly 60 characters.
+map_src:
+        db '..........','..........','..........','..........','..........','..........'     ; 0  HUD row
+        db '..........','..........','..........','..........','..........','..........'     ; 1
+        db '..........','..........','..........','..........','..........','.......','|','..' ; 2  pole top
+        db '..........','..........','..........','..........','..........','.......','|','..' ; 3
+        db '..........','..........','..........','..........','..........','.......','|','..' ; 4
+        db '..........','..........','..........','..........','..........','.......','|','..' ; 5
+        db '........','M','...','BBB','?','............','?','....','BBB','..........','M','?','.....','S','...|..'   ; 6
+        db '..........','..........','..','ccc','..........','.','[]','..','ccc','.........','SS','...|..'            ; 7
+        db '..........','........','ccc','.........','[]','....','()','.......','c','.....','SSS','...|..'            ; 8
+        db '..........','..........','..........','()','....','()','..........','..','SSSS','...','S','..'             ; 9  Mario stands here
+        db 'GGGGGGGGGG','GGGGGGGGGG','GG','...','GGGGGGGGGG','GGGGG','...','GGGGGGGGGG','GGGGGGG'                       ; 10 ground, pits
+        db 'GGGGGGGGGG','GGGGGGGGGG','GG','...','GGGGGGGGGG','GGGGG','...','GGGGGGGGGG','GGGGGGG'                       ; 11
+        times MAP_SIZE-($-map_src) db 0         ; build error unless exactly 12 rows of 60
+        times ($-map_src)-MAP_SIZE db 0

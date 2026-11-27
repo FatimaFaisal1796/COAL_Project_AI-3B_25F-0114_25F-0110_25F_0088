@@ -1,0 +1,205 @@
+; module10_collision.inc - Module 10: collision detection
+; Procedures: ScanCol, HorizCollide, CheckFloor, CheckCeiling, Overlap, OverlapEnt, IsStomp
+
+; ScanCol(px) -> AX = 1 if any tile at column px, over Mario's height, is solid
+ScanCol:
+        push bp
+        mov bp, sp
+        push bx
+        push cx
+        push si
+        call GetHeight
+        mov cx, ax
+        shr cx, 3
+        inc cx                      ; 3 samples (small) or 5 (super)
+        mov si, 1                   ; offsets above the feet: 1, 8, 16, 24, 32
+.l:     mov ax, [my_int]
+        sub ax, si
+        push word [bp+4]
+        push ax
+        call IsSolid
+        test ax, ax
+        jnz near .hit
+        cmp si, 1
+        jne near .n1
+        mov si, 8
+        jmp near .nx
+.n1:    add si, 8
+.nx:    dec cx
+        jnz near .l
+        xor ax, ax
+        jmp near .o
+.hit:   mov ax, 1
+.o:     pop si
+        pop cx
+        pop bx
+        pop bp
+        ret 2
+
+HorizCollide:                       ; push Mario out of walls; vx = 0 on contact
+        push ax
+        push bx
+        mov ax, [vx]
+        test ax, ax
+        jz near .o
+        js near .left
+        mov bx, [mx_int]
+        add bx, 13                  ; right edge of the 12-pixel hitbox
+        push bx
+        call ScanCol
+        test ax, ax
+        jz near .o
+        mov ax, bx
+        shr ax, 4
+        shl ax, 4
+        sub ax, 14
+        mov [mx_int], ax
+        jmp near .stop
+.left:  mov bx, [mx_int]
+        add bx, 2                   ; left edge
+        push bx
+        call ScanCol
+        test ax, ax
+        jz near .o
+        mov ax, bx
+        shr ax, 4
+        inc ax
+        shl ax, 4
+        sub ax, 2
+        mov [mx_int], ax
+.stop:  mov word [vx], 0
+        mov byte [mx_frac], 0
+.o:     pop bx
+        pop ax
+        ret
+
+CheckFloor:                         ; falling: land on a solid tile under either foot
+        push ax
+        push bx
+        mov bx, [mx_int]
+        lea ax, [bx+2]
+        push ax
+        push word [my_int]
+        call IsSolid
+        test ax, ax
+        jnz near .land
+        lea ax, [bx+13]
+        push ax
+        push word [my_int]
+        call IsSolid
+        test ax, ax
+        jz near .o
+.land:  mov ax, [my_int]
+        and ax, 0FFF0h              ; top of that tile
+        mov [my_int], ax
+        mov byte [my_frac], 0
+        mov word [vy], 0
+        mov byte [on_ground], 1
+        mov byte [chain], 0
+.o:     pop bx
+        pop ax
+        ret
+
+CheckCeiling:                       ; rising: bump the head, trigger the block
+        push ax
+        push bx
+        push cx
+        push dx
+        call GetHeight
+        mov cx, ax
+        mov dx, [my_int]
+        sub dx, cx                  ; top y
+        mov bx, [mx_int]
+        lea ax, [bx+2]
+        push ax
+        push dx
+        call IsSolid
+        test ax, ax
+        jnz near .bump
+        lea ax, [bx+13]
+        push ax
+        push dx
+        call IsSolid
+        test ax, ax
+        jz near .o
+.bump:  mov ax, dx
+        shr ax, 4
+        inc ax
+        shl ax, 4                   ; bottom of the tile
+        add ax, cx
+        mov [my_int], ax
+        mov byte [my_frac], 0
+        mov word [vy], 0
+        lea ax, [bx+8]              ; tile under the centre of the head
+        push ax
+        push dx
+        call TriggerBlock
+.o:     pop dx
+        pop cx
+        pop bx
+        pop ax
+        ret
+
+; Overlap(x1,y1,w1,h1,x2,y2,w2,h2) -> AX = 1 if the rectangles overlap
+Overlap:
+        push bp
+        mov bp, sp
+        mov ax, [bp+10]
+        add ax, [bp+6]
+        cmp [bp+18], ax
+        jge near .no
+        mov ax, [bp+18]
+        add ax, [bp+14]
+        cmp [bp+10], ax
+        jge near .no
+        mov ax, [bp+8]
+        add ax, [bp+4]
+        cmp [bp+16], ax
+        jge near .no
+        mov ax, [bp+16]
+        add ax, [bp+12]
+        cmp [bp+8], ax
+        jge near .no
+        mov ax, 1
+        jmp near .o
+.no:    xor ax, ax
+.o:     pop bp
+        ret 16
+
+; OverlapEnt : SI = entity; AX = 1 if it overlaps Mario's hitbox
+OverlapEnt:
+        push bx
+        call GetHeight
+        mov bx, ax
+        mov ax, [mx_int]
+        add ax, 2
+        push ax
+        mov ax, [my_int]
+        sub ax, bx
+        push ax
+        push word 12
+        push bx
+        mov ax, [ents+si+E_X]
+        add ax, 2
+        push ax
+        mov ax, [ents+si+E_Y]
+        sub ax, 16
+        push ax
+        push word 12
+        push word 16
+        call Overlap
+        pop bx
+        ret
+
+; IsStomp : SI = entity; AX = 1 if Mario moves down and his previous feet were above the upper half
+IsStomp:
+        cmp word [vy], 0
+        jle near .no
+        mov ax, [ents+si+E_Y]
+        sub ax, 8
+        cmp [prev_feet], ax
+        jg near .no
+        mov ax, 1
+        ret
+.no:    xor ax, ax
+        ret
